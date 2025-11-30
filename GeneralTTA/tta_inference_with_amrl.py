@@ -582,7 +582,7 @@ parser.add_argument('--adaptive-gamma', dest='adaptive_gamma', type=float, defau
                     help='Gamma (max margin) used by AMRL; only used when --adaptive-margin-rank is set (default=0.5)')
 
 args = parser.parse_args()
-args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
+# args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
 
 if torch.cuda.is_available():
     # choose GPU index if provided as single digit

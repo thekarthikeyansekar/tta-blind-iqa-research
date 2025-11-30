@@ -65,7 +65,7 @@ parser.add_argument('--run', dest='run', type=int, default=1,
 
 args = parser.parse_args()
 args.threshold += 0.001		# to correct for numeric errors
-args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
+# args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
 
 from models import TReS, Net
 if args.ng>2:

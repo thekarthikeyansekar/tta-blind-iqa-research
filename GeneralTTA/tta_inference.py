@@ -476,7 +476,7 @@ parser.add_argument('--run', dest='run', type=int, default=1,
 
 
 args = parser.parse_args()
-args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
+# args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
 
 if torch.cuda.is_available():
     if len(args.gpunum) == 1:
