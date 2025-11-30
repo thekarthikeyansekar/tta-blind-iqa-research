@@ -187,9 +187,9 @@ class Model(object):
         
         # Logging / saving
         self.global_step = 0
-        self.log_filename = os.path.join(self.config.svpath, 'amrl_training_logs.csv')
+        self.log_filename = os.path.join("/content/results", 'amrl_training_logs.csv')
         # ensure directory exists
-        # os.makedirs(self.config.svpath, exist_ok=True)
+        os.makedirs("/content/results", exist_ok=True)
         # if file doesn't exist, create with header
         if not os.path.exists(self.log_filename):
             df_init = pd.DataFrame(columns=[
@@ -211,7 +211,7 @@ class Model(object):
 
     def _save_model_state(self):
         # Save both net and ssh state_dict
-        model_path = os.path.join(self.config.svpath, f'model_step_{self.global_step}.pth')
+        model_path = os.path.join("/content/results", f'model_step_{self.global_step}.pth')
         torch.save({
             'net_state_dict': self.net.state_dict(),
             'ssh_state_dict': self.ssh.state_dict(),
