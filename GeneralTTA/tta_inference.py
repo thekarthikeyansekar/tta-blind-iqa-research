@@ -43,13 +43,13 @@ class Folder(data.Dataset):
         csv_path = os.path.join(root, 'MOS.csv')
         df = pd.read_csv(csv_path)
 
-        df['0'] = df['0'].apply(lambda x: root + '/' + x)
-        dataset = df['0'].tolist()
-        labels = df['1'].tolist()
+        # df['0'] = df['0'].apply(lambda x: root + '/' + x)
+        # dataset = df['0'].tolist()
+        # labels = df['1'].tolist()
 
-        # df['image_name'] = df['image_name'].apply(lambda x: root + '/' + x)
-        # dataset = df['image_name'].tolist()
-        # labels = df['MOS'].tolist()
+        df['image_name'] = df['image_name'].apply(lambda x: root + '/' + x)
+        dataset = df['image_name'].tolist()
+        labels = df['MOS'].tolist()
         sample = []
         self.root = root
         self.config = config
