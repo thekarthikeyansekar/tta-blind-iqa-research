@@ -18,6 +18,9 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import os
+import time
+from datetime import datetime
 
 # -----------------------------
 # Adaptive Margin Ranking Loss
@@ -30,6 +33,7 @@ class AdaptiveMarginRankLoss(nn.Module):
     """
 
     def __init__(self, gamma=0.5, eps=1e-8):
+        print("AdaptiveMarginRankLoss initialized")
         super(AdaptiveMarginRankLoss, self).__init__()
         self.gamma = float(gamma)
         self.eps = eps
@@ -38,6 +42,8 @@ class AdaptiveMarginRankLoss(nn.Module):
         """
         dist_high, dist_low: tensors shape (batch,) or (batch,1)
         q_high, q_low: predicted quality scores tensors shape (batch,) or (batch,1)
+        Returns:
+            loss scalar (tensor)
         """
         # Flatten
         dist_high = dist_high.view(-1)
@@ -178,7 +184,42 @@ class Model(object):
         self.optimizer_ssh = torch.optim.Adam(self.ext.parameters(), lr=self.lr)
         if not config.fix_ssh:
             self.optimizer_ssh = torch.optim.Adam(self.ssh.parameters(), lr=self.lr)
+        
+        # Logging / saving
+        self.global_step = 0
+        self.log_filename = os.path.join(self.config.svpath, 'amrl_training_logs.csv')
+        # ensure directory exists
+        os.makedirs(self.config.svpath, exist_ok=True)
+        # if file doesn't exist, create with header
+        if not os.path.exists(self.log_filename):
+            df_init = pd.DataFrame(columns=[
+                'timestamp','run_seed','global_step','batch_idx','iter_in_adapt',
+                'loss_total','loss_rank','loss_group_contrastive','loss_amrl',
+                'amrl_mean_mij','amrl_mean_abs_diff','amrl_mean_margin_violation',
+                'amrl_mean_dist_high','amrl_mean_dist_low',
+                'num_pairs','notes'
+            ])
+            df_init.to_csv(self.log_filename, index=False)
 
+        # how often to save model state (in adapt steps)
+        self.SAVE_MODEL_PER_STEP = 1  # set >1 to save less frequently
+
+    def _append_log(self, log_dict):
+        # atomic append: use pandas to append and not rewrite entire file repeatedly
+        df = pd.DataFrame([log_dict])
+        df.to_csv(self.log_filename, mode='a', header=False, index=False)
+
+    def _save_model_state(self):
+        # Save both net and ssh state_dict
+        model_path = os.path.join(self.config.svpath, f'model_step_{self.global_step}.pth')
+        torch.save({
+            'net_state_dict': self.net.state_dict(),
+            'ssh_state_dict': self.ssh.state_dict(),
+            'optimizer_ssh_state_dict': self.optimizer_ssh.state_dict(),
+            'global_step': self.global_step,
+            'timestamp': datetime.utcnow().isoformat()
+        }, model_path)
+        print(f"[Model saved] step={self.global_step} -> {model_path}")
 
     def test(self, data, pretrained=0):
         if pretrained:
@@ -373,12 +414,25 @@ class Model(object):
             self.ssh.train()
 
         loss_hist = []
+        # We'll capture per-iteration logs for this adapt() call
+        per_adapt_logs = []
 
         for iteration in range(config.niter):
 
             target = torch.ones(inputs.shape[0]).cuda()
 
             loss = torch.tensor(0.0, device=self.device)
+
+            # initialize per-iteration diagnostic values
+            loss_rank_val = None
+            loss_group_val = None
+            loss_amrl_val = None
+            amrl_mean_mij = None
+            amrl_mean_abs_diff = None
+            amrl_mean_margin_violation = None
+            amrl_mean_dist_high = None
+            amrl_mean_dist_low = None
+            num_pairs = 0
 
             # Ranking / blur / comp / nos branch (AMRL integrated)
             if (config.rank or config.blur or config.comp or config.nos) and (f_low is not None):
@@ -394,10 +448,31 @@ class Model(object):
                     # q_high and q_low are predicted scores from old_net (as tensors)
                     q_high_vec = q_high.view(-1).to(dist_high.device)
                     q_low_vec = q_low.view(-1).to(dist_low.device)
+
+                    ### Start
+                    # diagnostics BEFORE computing mean loss
+                    abs_diff = torch.abs(q_high_vec - q_low_vec)
+                    m_ij = self.adaptive_gamma * torch.sigmoid(abs_diff)
+                    margin_violation = m_ij - (dist_high - dist_low)
+
+                    # scalar stats
+                    amrl_mean_mij = float(m_ij.mean().detach().cpu().item())
+                    amrl_mean_abs_diff = float(abs_diff.mean().detach().cpu().item())
+                    amrl_mean_margin_violation = float(torch.clamp(margin_violation, min=0.0).mean().detach().cpu().item())
+                    amrl_mean_dist_high = float(dist_high.mean().detach().cpu().item())
+                    amrl_mean_dist_low = float(dist_low.mean().detach().cpu().item())
+                    num_pairs = int(dist_high.view(-1).shape[0])
+
+                    # compute loss (use the module)
+                    ### End
                     loss = self.amrl(dist_high, dist_low, q_high_vec, q_low_vec)
+                    loss_amrl_val = float(loss.detach().cpu().item())
+
+                    # debug print(s)
+                    print(f"[AMRL] step={self.global_step} iter={iteration} num_pairs={num_pairs} mean_mij={amrl_mean_mij:.6f} mean_abs_diff={amrl_mean_abs_diff:.6f} mean_margin_violation={amrl_mean_margin_violation:.6f} mean_dist_high={amrl_mean_dist_high:.6f} mean_dist_low={amrl_mean_dist_low:.6f}")
                 else:
                     # fallback to original BCELoss on sigmoid(dist_high - dist_low)
-                    loss = self.rank_loss(m(dist_high - dist_low), target[:dist_high.shape[0]])
+                    loss = self.rank_loss(m(dist_high - dist_low), target)
 
             # contrastive/contrique branch
             if config.contrastive or config.contrique:
@@ -429,10 +504,14 @@ class Model(object):
 
                 loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
 
+                group_loss_val = float(loss_fn(f_neg_feat, f_pos_feat).detach().cpu().item())
+
                 if config.rank or config.blur or config.comp or config.nos:
                     loss += loss_fn(f_neg_feat, f_pos_feat) * config.weight
+                    loss_group_val = float((loss_fn(f_neg_feat, f_pos_feat) * config.weight).detach().cpu().item())
                 else:
                     loss = loss_fn(f_neg_feat, f_pos_feat)
+                    loss_group_val = group_loss_val
 
             if config.rotation:
                 inputs_ssh, labels1_ssh = rotate_batch(inputs.cuda(), 'rand')
@@ -443,6 +522,55 @@ class Model(object):
             loss.backward()
             self.optimizer_ssh.step()
             loss_hist.append(loss.detach().cpu())
+
+            ## Start
+            # fill any missing numeric values
+            loss_total_val = float(loss.detach().cpu().item())
+            if loss_rank_val is None:
+                loss_rank_val = np.nan
+            if loss_group_val is None:
+                loss_group_val = np.nan
+            if loss_amrl_val is None:
+                # if we computed amrl stats but not loss, compute if possible
+                loss_amrl_val = np.nan
+
+            # append per-iteration log to CSV
+            log_row = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'run_seed': getattr(self.config, 'seed', None),
+                'global_step': self.global_step,
+                'batch_idx': getattr(self, 'current_batch_idx', None),
+                'iter_in_adapt': iteration,
+                'loss_total': loss_total_val,
+                'loss_rank': loss_rank_val,
+                'loss_group_contrastive': loss_group_val,
+                'loss_amrl': loss_amrl_val,
+                'amrl_mean_mij': amrl_mean_mij,
+                'amrl_mean_abs_diff': amrl_mean_abs_diff,
+                'amrl_mean_margin_violation': amrl_mean_margin_violation,
+                'amrl_mean_dist_high': amrl_mean_dist_high,
+                'amrl_mean_dist_low': amrl_mean_dist_low,
+                'num_pairs': num_pairs,
+                'notes': ''
+            }
+            try:
+                self._append_log(log_row)
+            except Exception as e:
+                print(f"[Logging error] could not append log at step {self.global_step} iter {iteration}: {e}")
+
+            per_adapt_logs.append(log_row)
+
+        # increment global step after finishing adapt() call
+        self.global_step += 1
+
+        # save model periodically
+        if (self.global_step % max(1, self.SAVE_MODEL_PER_STEP)) == 0:
+            try:
+                self._save_model_state()
+            except Exception as e:
+                print(f"[Model save error] {e}")
+        ### End
+
 
         return loss_hist
 
@@ -473,6 +601,8 @@ class Model(object):
             label = torch.as_tensor(label.to(self.device)).requires_grad_(False)
 
             old_net.load_state_dict(torch.load(self.config.svpath ))
+            
+            self.current_batch_idx = steps
 
             if config.group_contrastive:
                 if len(img) > 3:
@@ -582,6 +712,14 @@ parser.add_argument('--adaptive-gamma', dest='adaptive_gamma', type=float, defau
                     help='Gamma (max margin) used by AMRL; only used when --adaptive-margin-rank is set (default=0.5)')
 
 args = parser.parse_args()
+
+save_dir = "/content/results"
+os.makedirs(save_dir, exist_ok=True)
+csv_path = os.path.join(save_dir, "args_values.csv")
+
+# convert argparse Namespace to dict and save as a single-row CSV
+df = pd.DataFrame([vars(args)])
+df.to_csv(csv_path, index=False)
 # args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
 
 if torch.cuda.is_available():
