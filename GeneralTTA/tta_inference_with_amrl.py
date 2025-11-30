@@ -189,7 +189,7 @@ class Model(object):
         self.global_step = 0
         self.log_filename = os.path.join(self.config.svpath, 'amrl_training_logs.csv')
         # ensure directory exists
-        os.makedirs(self.config.svpath, exist_ok=True)
+        # os.makedirs(self.config.svpath, exist_ok=True)
         # if file doesn't exist, create with header
         if not os.path.exists(self.log_filename):
             df_init = pd.DataFrame(columns=[
