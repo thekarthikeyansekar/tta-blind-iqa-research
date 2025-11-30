@@ -291,6 +291,8 @@ class Model(object):
 
             if config.rank:
 
+                print(f"[RankConfig] step={self.global_step}")
+
                 sigma1 = 40 + np.random.random() * 20
                 sigma2 = 5 + np.random.random() * 15
 
@@ -446,6 +448,7 @@ class Model(object):
 
                 if self.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
                     # q_high and q_low are predicted scores from old_net (as tensors)
+                    print(f"[AMRLConfig] step={self.global_step}")
                     q_high_vec = q_high.view(-1).to(dist_high.device)
                     q_low_vec = q_low.view(-1).to(dist_low.device)
 
@@ -473,6 +476,7 @@ class Model(object):
                 else:
                     # fallback to original BCELoss on sigmoid(dist_high - dist_low)
                     loss = self.rank_loss(m(dist_high - dist_low), target)
+                    print(f"[RankLoss] step={self.global_step} iter={iteration}")
 
             # contrastive/contrique branch
             if config.contrastive or config.contrique:
