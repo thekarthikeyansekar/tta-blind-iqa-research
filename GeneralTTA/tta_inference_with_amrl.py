@@ -202,7 +202,7 @@ class Model(object):
             df_init.to_csv(self.log_filename, index=False)
 
         # how often to save model state (in adapt steps)
-        self.SAVE_MODEL_PER_STEP = 1  # set >1 to save less frequently
+        self.SAVE_MODEL_PER_STEP = getattr(config, 'n_steps_to_save', 50)
 
     def _append_log(self, log_dict):
         # atomic append: use pandas to append and not rewrite entire file repeatedly
@@ -708,6 +708,7 @@ parser.add_argument('--bn', action='store_true')
 parser.add_argument('--ln', action='store_true')
 parser.add_argument('--run', dest='run', type=int, default=1,
                         help='for running at multiple seeds')
+parser.add_argument('--n_steps_to_save', default=50, type=int)
 
 # new flags for Adaptive Margin Rank Loss
 parser.add_argument('--adaptive-margin-rank', dest='adaptive_margin_rank', action='store_true',
