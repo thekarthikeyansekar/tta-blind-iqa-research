@@ -217,7 +217,7 @@ class Model(object):
             'ssh_state_dict': self.ssh.state_dict(),
             'optimizer_ssh_state_dict': self.optimizer_ssh.state_dict(),
             'global_step': self.global_step,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now()
         }, model_path)
         print(f"[Model saved] step={self.global_step} -> {model_path}")
 
@@ -285,6 +285,10 @@ class Model(object):
 
         f_low = []
         f_high = []
+        q_high = None
+        q_low = None
+        dist_high = None
+        dist_low = None
 
         with torch.no_grad():
             pred0, _ = old_net(data_dict['image'].cuda())
@@ -365,6 +369,27 @@ class Model(object):
                     f_high = torch.squeeze(torch.stack(f_high), dim=1)
                     q_low = torch.stack(q_low_list).view(-1, 1)
                     q_high = torch.stack(q_high_list).view(-1, 1)
+            if config.adaptive_margin_rank:
+                print(f"[AMRLConfig] step={self.global_step}")
+
+                sigma1 = 40 + np.random.random() * 20
+                sigma2 = 5 + np.random.random() * 15
+
+                data_dict['blur_high'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma1))(inputs).cuda()
+                data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma2))(inputs).cuda()
+
+                q_high, _ = old_net(data_dict['blur_high'].cuda())
+                q_low, _ = old_net(data_dict['blur_low'].cuda())
+
+                f_low = data_dict['blur_low']
+                f_high = data_dict['blur_high']
+
+                f_neg_feat = self.ssh(f_low)
+                f_pos_feat = self.ssh(f_high)
+                f_actual = self.ssh(inputs.cuda())
+
+                dist_high = torch.nn.PairwiseDistance(p=2)(f_pos_feat, f_actual)
+                dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
 
         if config.comp:
             f_low = data_dict['comp_low'].cuda()
@@ -438,45 +463,44 @@ class Model(object):
 
             # Ranking / blur / comp / nos branch (AMRL integrated)
             if (config.rank or config.blur or config.comp or config.nos) and (f_low is not None):
-
+                print(f"[RankLoss] step={self.global_step} iter={iteration}")
                 f_neg_feat = self.ssh(f_low)
                 f_pos_feat = self.ssh(f_high)
                 f_actual = self.ssh(inputs.cuda())
 
                 dist_high = torch.nn.PairwiseDistance(p=2)(f_pos_feat, f_actual)
                 dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
+                loss = self.rank_loss(m(dist_high - dist_low), target)
+                print(f"[loss] rank_loss = {loss}")
 
-                if self.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
-                    # q_high and q_low are predicted scores from old_net (as tensors)
-                    print(f"[AMRLConfig] step={self.global_step}")
-                    q_high_vec = q_high.view(-1).to(dist_high.device)
-                    q_low_vec = q_low.view(-1).to(dist_low.device)
+            if self.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
+                # q_high and q_low are predicted scores from old_net (as tensors)
+                print(f"[AMRLLoss] step={self.global_step}")
+                q_high_vec = q_high.view(-1).to(dist_high.device)
+                q_low_vec = q_low.view(-1).to(dist_low.device)
 
-                    ### Start
-                    # diagnostics BEFORE computing mean loss
-                    abs_diff = torch.abs(q_high_vec - q_low_vec)
-                    m_ij = self.adaptive_gamma * torch.sigmoid(abs_diff)
-                    margin_violation = m_ij - (dist_high - dist_low)
+                ### Start
+                # diagnostics BEFORE computing mean loss
+                abs_diff = torch.abs(q_high_vec - q_low_vec)
+                m_ij = self.adaptive_gamma * torch.sigmoid(abs_diff)
+                margin_violation = m_ij - (dist_high - dist_low)
 
-                    # scalar stats
-                    amrl_mean_mij = float(m_ij.mean().detach().cpu().item())
-                    amrl_mean_abs_diff = float(abs_diff.mean().detach().cpu().item())
-                    amrl_mean_margin_violation = float(torch.clamp(margin_violation, min=0.0).mean().detach().cpu().item())
-                    amrl_mean_dist_high = float(dist_high.mean().detach().cpu().item())
-                    amrl_mean_dist_low = float(dist_low.mean().detach().cpu().item())
-                    num_pairs = int(dist_high.view(-1).shape[0])
+                # scalar stats
+                amrl_mean_mij = float(m_ij.mean().detach().cpu().item())
+                amrl_mean_abs_diff = float(abs_diff.mean().detach().cpu().item())
+                amrl_mean_margin_violation = float(torch.clamp(margin_violation, min=0.0).mean().detach().cpu().item())
+                amrl_mean_dist_high = float(dist_high.mean().detach().cpu().item())
+                amrl_mean_dist_low = float(dist_low.mean().detach().cpu().item())
+                num_pairs = int(dist_high.view(-1).shape[0])
 
-                    # compute loss (use the module)
-                    ### End
-                    loss = self.amrl(dist_high, dist_low, q_high_vec, q_low_vec)
-                    loss_amrl_val = float(loss.detach().cpu().item())
+                # compute loss (use the module)
+                ### End
+                loss = self.amrl(dist_high, dist_low, q_high_vec, q_low_vec)
+                loss_amrl_val = float(loss.detach().cpu().item())
+                print(f"[loss] amrl_loss = {loss_amrl_val}")
 
-                    # debug print(s)
-                    print(f"[AMRL] step={self.global_step} iter={iteration} num_pairs={num_pairs} mean_mij={amrl_mean_mij:.6f} mean_abs_diff={amrl_mean_abs_diff:.6f} mean_margin_violation={amrl_mean_margin_violation:.6f} mean_dist_high={amrl_mean_dist_high:.6f} mean_dist_low={amrl_mean_dist_low:.6f}")
-                else:
-                    # fallback to original BCELoss on sigmoid(dist_high - dist_low)
-                    loss = self.rank_loss(m(dist_high - dist_low), target)
-                    print(f"[RankLoss] step={self.global_step} iter={iteration}")
+                # debug print(s)
+                print(f"[AMRL] step={self.global_step} iter={iteration} num_pairs={num_pairs} mean_mij={amrl_mean_mij:.6f} mean_abs_diff={amrl_mean_abs_diff:.6f} mean_margin_violation={amrl_mean_margin_violation:.6f} mean_dist_high={amrl_mean_dist_high:.6f} mean_dist_low={amrl_mean_dist_low:.6f}")
 
             # contrastive/contrique branch
             if config.contrastive or config.contrique:
@@ -540,7 +564,7 @@ class Model(object):
 
             # append per-iteration log to CSV
             log_row = {
-                'timestamp': datetime.utcnow().isoformat(),
+                'timestamp': datetime.now(),
                 'run_seed': getattr(self.config, 'seed', None),
                 'global_step': self.global_step,
                 'batch_idx': getattr(self, 'current_batch_idx', None),
