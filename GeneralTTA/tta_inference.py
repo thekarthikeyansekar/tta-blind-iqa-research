@@ -427,6 +427,13 @@ class Model(object):
 
                 test_srcc, _ = stats.spearmanr(pred_scores1, gt_scores1)
                 test_plcc, _ = stats.pearsonr(pred_scores1, gt_scores1)
+                
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.plcc_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, steps, test_srcc_old, test_srcc, test_plcc_old, test_plcc])
+                    f.flush()
+
                 print(
                     'After {} images test_srcc old : {}  new {} \n test_plcc old:{} new:{}'.format(steps, test_srcc_old,
                                                                                                    test_srcc,
@@ -492,6 +499,7 @@ parser.add_argument('--run', dest='run', type=int, default=1,
 parser.add_argument("--exp-name",  dest='exp_name', help="experiment name", default="exp")
 parser.add_argument("--exp-path",  dest='exp_path', help="experiment path")
 parser.add_argument("--logs-csv-path",  dest='logs_csv_path', help="logs csv path")
+parser.add_argument("--plcc-csv-path",  dest='plcc_csv_path', help="plcc csv path")
 
 args = parser.parse_args()
 
@@ -511,6 +519,12 @@ args.logs_csv_path = os.path.join(args.exp_path,"training_loss_log.csv")
 with open(args.logs_csv_path, mode="w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["timestamp", "iteration", "loss_type", "loss_value"])
+
+args.plcc_csv_path = os.path.join(args.exp_path,"plcc_srcc_scores.csv")
+with open(args.plcc_csv_path, mode="w", newline="") as f:
+    b_writer = csv.writer(f)
+    b_writer.writerow(["timestamp", "steps", "srcc", "srcc_new", "plcc", "plcc_new"])
+
 
 if torch.cuda.is_available():
     if len(args.gpunum) == 1:
