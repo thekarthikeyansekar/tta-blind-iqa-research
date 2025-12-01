@@ -504,7 +504,7 @@ parser.add_argument("--plcc-csv-path",  dest='plcc_csv_path', help="plcc csv pat
 args = parser.parse_args()
 
 if args.exp_name == "exp":
-    args.exp_name = args.exp_name + str(datetime.now()).replace(" ","_").replace(":","_").split(".")[0]
+    args.exp_name = args.exp_name + "_" + str(datetime.now()).replace(" ","_").replace(":","_").split(".")[0]
 
 args.exp_path = "/content/results/" + args.exp_name 
 os.makedirs(args.exp_path, exist_ok=True)
