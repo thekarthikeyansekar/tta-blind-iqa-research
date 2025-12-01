@@ -749,7 +749,7 @@ if args.exp_name == "exp":
 
 args.exp_path = "/content/results/" + args.exp_name 
 os.makedirs(args.exp_path, exist_ok=True)
-csv_path = os.path.join(save_dir, "args_values.csv")
+csv_path = os.path.join(args.exp_path, "args_values.csv")
 
 # convert argparse Namespace to dict and save as a single-row CSV
 df = pd.DataFrame([vars(args)])
