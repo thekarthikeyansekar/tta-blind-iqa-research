@@ -187,9 +187,9 @@ class Model(object):
         
         # Logging / saving
         self.global_step = 0
-        self.log_filename = os.path.join("/content/results", 'amrl_training_logs.csv')
+        self.log_filename = os.path.join(self.config.exp_path, 'amrl_training_logs.csv')
         # ensure directory exists
-        os.makedirs("/content/results", exist_ok=True)
+        os.makedirs(self.config.exp_path, exist_ok=True)
         # if file doesn't exist, create with header
         if not os.path.exists(self.log_filename):
             df_init = pd.DataFrame(columns=[
@@ -211,7 +211,7 @@ class Model(object):
 
     def _save_model_state(self):
         # Save both net and ssh state_dict
-        model_path = os.path.join("/content/results", f'model_step_{self.global_step}.pth')
+        model_path = os.path.join(self.config.exp_path, f'model_step_{self.global_step}.pth')
         torch.save({
             'net_state_dict': self.net.state_dict(),
             'ssh_state_dict': self.ssh.state_dict(),
@@ -739,11 +739,16 @@ parser.add_argument('--adaptive-margin-rank', dest='adaptive_margin_rank', actio
                     help='Enable Adaptive Margin Ranking Loss (AMRL)')
 parser.add_argument('--adaptive-gamma', dest='adaptive_gamma', type=float, default=0.5,
                     help='Gamma (max margin) used by AMRL; only used when --adaptive-margin-rank is set (default=0.5)')
+parser.add_argument("--exp-name",  dest='exp_name' help="experiment name", default="exp")
+parser.add_argument("--exp-path",  dest='exp_path' help="experiment path")
 
 args = parser.parse_args()
 
-save_dir = "/content/results"
-os.makedirs(save_dir, exist_ok=True)
+if args.exp_name == "exp":
+    args.exp_name = args.exp_name + str(datetime.now()).replace(" ","_").replace(":","_").split(".")[0]
+
+args.exp_path = "/content/results/" + args.exp_name 
+os.makedirs(args.exp_path, exist_ok=True)
 csv_path = os.path.join(save_dir, "args_values.csv")
 
 # convert argparse Namespace to dict and save as a single-row CSV
