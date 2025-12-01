@@ -11,6 +11,10 @@ import os.path
 from utils import *
 from rotation import *
 from models import Net
+import os
+import time
+import csv
+from datetime import datetime
 
 
 class DataLoader(object):
@@ -297,6 +301,12 @@ class Model(object):
                 dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
 
                 loss = self.rank_loss(m(dist_high - dist_low), target)
+                
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "rank", loss])
+                    f.flush()
 
             if config.contrastive or config.contrique:
                 f_neg_feat = self.ssh(f_low)
@@ -331,6 +341,12 @@ class Model(object):
                     loss += loss_fn(f_neg_feat, f_pos_feat) * config.weight
                 else:
                     loss = loss_fn(f_neg_feat, f_pos_feat)
+
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "group_contrastive", loss])
+                    f.flush()
 
             if config.rotation:
                 inputs_ssh, labels1_ssh = rotate_batch(inputs.cuda(), 'rand')
@@ -473,10 +489,28 @@ parser.add_argument('--bn', action='store_true')
 parser.add_argument('--ln', action='store_true')
 parser.add_argument('--run', dest='run', type=int, default=1,
                         help='for running at multiple seeds')
-
+parser.add_argument("--exp-name",  dest='exp_name', help="experiment name", default="exp")
+parser.add_argument("--exp-path",  dest='exp_path', help="experiment path")
+parser.add_argument("--logs-csv-path",  dest='logs_csv_path', help="logs csv path")
 
 args = parser.parse_args()
+
+if args.exp_name == "exp":
+    args.exp_name = args.exp_name + str(datetime.now()).replace(" ","_").replace(":","_").split(".")[0]
+
+args.exp_path = "/content/results/" + args.exp_name 
+os.makedirs(args.exp_path, exist_ok=True)
+csv_path = os.path.join(args.exp_path, "args_values.csv")
+
+# convert argparse Namespace to dict and save as a single-row CSV
+df = pd.DataFrame([vars(args)])
+df.to_csv(csv_path, index=False)
 # args.datapath='/media/user/New Volume/Subhadeep/datasets/'+args.datapath
+
+args.logs_csv_path = os.path.join(args.exp_path,"training_loss_log.csv")
+with open(args.logs_csv_path, mode="w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["timestamp", "iteration", "loss_type", "loss_value"])
 
 if torch.cuda.is_available():
     if len(args.gpunum) == 1:
