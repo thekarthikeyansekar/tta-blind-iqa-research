@@ -305,7 +305,7 @@ class Model(object):
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 with open(args.logs_csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, iteration, "rank", loss])
+                    writer.writerow([timestamp, iteration, "rank", float(loss.detach().cpu().item())])
                     f.flush()
 
             if config.contrastive or config.contrique:
