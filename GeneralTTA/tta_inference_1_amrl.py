@@ -303,27 +303,28 @@ class Model(object):
 
                 f_low = torch.squeeze(torch.stack(f_low), dim=1)
                 f_high = torch.squeeze(torch.stack(f_high), dim=1)
-            if config.adaptive_margin_rank:
-                print(f"[AMRLConfig] step={self.global_step}")
+        if config.adaptive_margin_rank:
+            print(f"[AMRLConfig] step={self.global_step}")
 
-                sigma1 = 40 + np.random.random() * 20
-                sigma2 = 5 + np.random.random() * 15
+            sigma1 = 40 + np.random.random() * 20
+            sigma2 = 5 + np.random.random() * 15
 
-                data_dict['blur_high'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma1))(inputs).cuda()
-                data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma2))(inputs).cuda()
-
+            data_dict['blur_high'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma1))(inputs).cuda()
+            data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=(sigma2))(inputs).cuda()
+            
+            with torch.no_grad():
                 q_high, _ = old_net(data_dict['blur_high'].cuda())
                 q_low, _ = old_net(data_dict['blur_low'].cuda())
 
-                f_low = data_dict['blur_low']
-                f_high = data_dict['blur_high']
+            f_low = data_dict['blur_low']
+            f_high = data_dict['blur_high']
 
-                f_neg_feat = self.ssh(f_low)
-                f_pos_feat = self.ssh(f_high)
-                f_actual = self.ssh(inputs.cuda())
+            f_neg_feat = self.ssh(f_low)
+            f_pos_feat = self.ssh(f_high)
+            f_actual = self.ssh(inputs.cuda())
 
-                dist_high = torch.nn.PairwiseDistance(p=2)(f_pos_feat, f_actual)
-                dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
+            dist_high = torch.nn.PairwiseDistance(p=2)(f_pos_feat, f_actual)
+            dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
         if config.comp:
             f_low = data_dict['comp_low'].cuda()
             f_high = data_dict['comp_high'].cuda()
@@ -393,8 +394,8 @@ class Model(object):
             if config.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
                 # q_high and q_low are predicted scores from old_net (as tensors)
                 print(f"[AMRLLoss] step={self.global_step}")
-                q_high_vec = q_high.view(-1).to(dist_high.device)
-                q_low_vec = q_low.view(-1).to(dist_low.device)
+                q_high_vec = q_high.view(-1).detach().to(dist_high.device)
+                q_low_vec = q_low.view(-1).detach().to(dist_low.device)
 
                 ### Start
                 # diagnostics BEFORE computing mean loss
