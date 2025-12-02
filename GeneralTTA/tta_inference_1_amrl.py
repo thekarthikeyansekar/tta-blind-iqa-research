@@ -385,6 +385,7 @@ class Model(object):
                     f.flush()
             
             # Adaptive Margin Rank Loss - Start
+            print(f"[DEBUG] adaptive_margin_rank = {config.adaptive_margin_rank}, amrl = {self.amrl is not None}, q_high = {q_high is not None}, q_low = {q_low is not None}")
             if config.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
                 # q_high and q_low are predicted scores from old_net (as tensors)
                 print(f"[AMRLLoss] step={self.global_step}")
