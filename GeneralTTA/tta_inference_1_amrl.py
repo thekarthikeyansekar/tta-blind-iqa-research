@@ -54,7 +54,8 @@ class AdaptiveMarginRankLoss(nn.Module):
         loss_per_pair = torch.clamp(margin_violation, min=0.0)
 
         if loss_per_pair.numel() == 0:
-            return torch.tensor(0.0, device=dist_high.device, requires_grad=True)
+            return dist_high.sum() * 0.0
+            # torch.tensor(0.0, device=dist_high.device, requires_grad=True)
         loss = loss_per_pair.mean()
         return loss
 
