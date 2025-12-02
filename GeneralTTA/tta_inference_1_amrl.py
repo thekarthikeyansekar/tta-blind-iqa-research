@@ -512,10 +512,13 @@ class Model(object):
                 if len(img) > 3:
                     loss_hist = self.adapt(data_dict, config, old_net)
                 else:
-                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
+                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank:
                         config.group_contrastive = False
                         loss_hist = self.adapt(data_dict, config, old_net)
             elif config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
+                loss_hist = self.adapt(data_dict, config, old_net)
+            # Adaptive Margin 
+            elif config.adaptive_margin_rank:
                 loss_hist = self.adapt(data_dict, config, old_net)
 
             # if config.rank:
