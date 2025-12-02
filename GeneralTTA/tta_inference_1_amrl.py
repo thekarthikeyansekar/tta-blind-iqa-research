@@ -616,10 +616,10 @@ parser.add_argument('--run', dest='run', type=int, default=1,
 
 # Adaptive Margin Rank - Start
                         # new flags for Adaptive Margin Rank Loss
-parser.add_argument('--adaptive-margin-rank', dest='adaptive_margin_rank', action='store_true',
+parser.add_argument('--adaptive_margin_rank', dest='adaptive_margin_rank', action='store_true',
                     help='Enable Adaptive Margin Ranking Loss (AMRL)')
 parser.add_argument('--adaptive-gamma', dest='adaptive_gamma', type=float, default=0.5,
-                    help='Gamma (max margin) used by AMRL; only used when --adaptive-margin-rank is set (default=0.5)')
+                    help='Gamma (max margin) used by AMRL; only used when --adaptive_margin_rank is set (default=0.5)')
 # Adaptive Margin Rank - End
 
 parser.add_argument("--exp-name",  dest='exp_name', help="experiment name", default="exp")
