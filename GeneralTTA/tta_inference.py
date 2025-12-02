@@ -336,16 +336,18 @@ class Model(object):
                 f_neg_feat = torch.squeeze(torch.stack(f_neg_feat), dim=1)
 
                 loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
+                tmp_loss = loss_fn(f_neg_feat, f_pos_feat)
 
                 if config.rank or config.blur or config.comp or config.nos:
-                    loss += loss_fn(f_neg_feat, f_pos_feat) * config.weight
+                    loss +=  tmp_loss * config.weight
                 else:
-                    loss = loss_fn(f_neg_feat, f_pos_feat)
+                    loss = tmp_loss
 
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 with open(args.logs_csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, iteration, "group_contrastive", loss])
+                    writer.writerow([timestamp, iteration, "group_contrastive", float(tmp_loss.detach().cpu().item())])
+                    writer.writerow([timestamp, iteration, "group_contrastive_additive", float(loss.detach().cpu().item())])
                     f.flush()
 
             if config.rotation:
