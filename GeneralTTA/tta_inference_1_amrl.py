@@ -379,11 +379,12 @@ class Model(object):
                 dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
 
                 loss = self.rank_loss(m(dist_high - dist_low), target)
+                tmp_loss = self.rank_loss(m(dist_high - dist_low), target)
                 
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 with open(args.logs_csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, iteration, "rank", float(loss.detach().cpu().item())])
+                    writer.writerow([timestamp, iteration, "rank", float(tmp_loss.detach().cpu().item())])
                     f.flush()
             
             # Adaptive Margin Rank Loss - Start
@@ -411,7 +412,8 @@ class Model(object):
                 # compute loss (use the module)
                 ### End
                 loss = self.amrl(dist_high, dist_low, q_high_vec, q_low_vec)
-                loss_amrl_val = float(loss.detach().cpu().item())
+                tmp_loss = self.amrl(dist_high, dist_low, q_high_vec, q_low_vec)
+                loss_amrl_val = float(tmp_loss.detach().cpu().item())
                 print(f"[loss] amrl_loss = {loss_amrl_val}")
 
                 # debug print(s)
@@ -420,7 +422,7 @@ class Model(object):
                 timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 with open(args.logs_csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, iteration, "adaptive_margin_rank", float(loss.detach().cpu().item())])
+                    writer.writerow([timestamp, iteration, "adaptive_margin_rank", loss_amrl_val])
                     f.flush()
             # Adaptive Margin Rank Loss - End
 
@@ -463,7 +465,7 @@ class Model(object):
                 with open(args.logs_csv_path, mode="a", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow([timestamp, iteration, "group_contrastive", float(tmp_loss.detach().cpu().item())])
-                    writer.writerow([timestamp, iteration, "group_contrastive_additive", float(loss.detach().cpu().item())])
+                    writer.writerow([timestamp, iteration, "group_contrastive_additive", loss])
                     f.flush()
 
             if config.rotation:
