@@ -243,6 +243,8 @@ class Model(object):
         dist_high = None
         dist_low = None
 
+        print(f"[adapt][config.adaptive_margin_rank] = {config.adaptive_margin_rank}")
+
         with torch.no_grad():
             pred0, _ = old_net(data_dict['image'].cuda())
 
