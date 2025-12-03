@@ -367,7 +367,7 @@ class Model(object):
         for iteration in range(config.niter):
 
             # Zero gradients at the start of each iteration
-            self.optimizer_ssh.zero_grad()
+            # self.optimizer_ssh.zero_grad()
             
             target = torch.ones(inputs.shape[0]).cuda()
             loss = None  # Initialize loss
