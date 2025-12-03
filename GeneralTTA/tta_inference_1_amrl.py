@@ -502,6 +502,10 @@ class Model(object):
                 loss.backward()
                 self.optimizer_ssh.step()
                 loss_hist.append(loss.detach().cpu())
+
+                # Fix to calculate new loss
+                dist_high = None
+                dist_low = None
             else:
                 print("[adapt] loss is None")
 
