@@ -514,6 +514,12 @@ class Model(object):
                 # loss_amrl_val = float(amrl_loss.detach().cpu().item())
                 print(f"[loss] cwrl_loss = {cwrl_loss}")
 
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "confidence_weighted_rank", cwrl_loss])
+                    f.flush()
+
             if config.contrastive or config.contrique:
                 f_neg_feat = self.ssh(f_low)
                 f_pos_feat = self.ssh(f_high)
