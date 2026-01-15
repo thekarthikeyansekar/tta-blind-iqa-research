@@ -697,6 +697,10 @@ class Model(object):
                                     float(mono_loss.detach().cpu().item())])
                     f.flush()
 
+                print(timestamp, iteration, "mono_loss",
+                                    float(mono_loss.detach().cpu().item()))
+            else:
+                print("Mono Loss is skipped")
 
             # Backward and optimize
             if loss is not None:
