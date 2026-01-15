@@ -286,23 +286,19 @@ class Model(object):
 
         return outs
 
-    
-    # def _margins_for_images(self, multi_images):
-    #     """
-    #     multi_images: list of tensors [B, C, H, W]
-    #     returns: tensor [S] (mean quality per scale)
-    #     """
-    #     scores = []
-
-    #     with torch.no_grad():
-    #         for img in multi_images:
-    #             q, _ = self.net(img)
-    #             scores.append(q.mean())
-
-    #     return torch.stack(scores)
-
-
     def _margins_for_images(self, multi):
+        preds = []
+        for im in multi:
+            if im.dim() == 3:
+                im = im.unsqueeze(0)
+            im = im.to(self.device)
+            p, _ = self.net(im)
+            preds.append(p.mean())  # 🔥 reduce batch
+        return torch.stack(preds)  # shape: [S]
+
+
+
+    def _margins_for_images_old(self, multi):
         preds = []
         for im in multi:
             if im.dim() == 3:
