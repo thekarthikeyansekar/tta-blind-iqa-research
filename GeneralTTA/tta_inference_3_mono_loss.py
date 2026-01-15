@@ -629,51 +629,8 @@ class Model(object):
                 else:
                     loss = contrastive_loss
 
-            if config.group_contrastive:
-
-                idx = np.argsort(pred0.cpu(), axis=0)
-
-                f_feat = self.ssh(inputs.cuda())
-
-                f_pos_feat = []
-                f_neg_feat = []
-
-                for n in range(max(2,int(config.batch_size*config.p))):
-                    try:
-                        f_pos_feat.append(f_feat[idx[n]])
-                        f_neg_feat.append(f_feat[idx[-n - 1]])
-                    except:
-                        continue
-
-                f_pos_feat = torch.squeeze(torch.stack(f_pos_feat), dim=1)
-                f_neg_feat = torch.squeeze(torch.stack(f_neg_feat), dim=1)
-
-                loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
-                tmp_loss = loss_fn(f_neg_feat, f_pos_feat)
-
-                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank or config.confidence_weighted_rank:
-                    loss = loss + (tmp_loss * config.weight)
-                else:
-                    loss = tmp_loss
-
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                with open(args.logs_csv_path, mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([timestamp, iteration, "group_contrastive", float(tmp_loss)])
-                    writer.writerow([timestamp, iteration, "group_contrastive_additive", float(loss)])
-                    f.flush()
-
-            if config.rotation:
-                inputs_ssh, labels1_ssh = rotate_batch(inputs.cuda(), 'rand')
-                outputs_ssh = self.ssh(inputs_ssh.float())
-                rotation_loss = nn.CrossEntropyLoss()(outputs_ssh, labels1_ssh.cuda())
-                
-                if loss is not None:
-                    loss = loss + rotation_loss
-                else:
-                    loss = rotation_loss
-
-            # -----------------------------
+                        # -----------------------------
+            
             # Mono Loss
             # -----------------------------
             if config.mono_loss and self.mono_loss_fn is not None:
@@ -701,6 +658,50 @@ class Model(object):
                                     float(mono_loss.detach().cpu().item()))
             else:
                 print("Mono Loss is skipped")
+
+            if config.group_contrastive:
+
+                idx = np.argsort(pred0.cpu(), axis=0)
+
+                f_feat = self.ssh(inputs.cuda())
+
+                f_pos_feat = []
+                f_neg_feat = []
+
+                for n in range(max(2,int(config.batch_size*config.p))):
+                    try:
+                        f_pos_feat.append(f_feat[idx[n]])
+                        f_neg_feat.append(f_feat[idx[-n - 1]])
+                    except:
+                        continue
+
+                f_pos_feat = torch.squeeze(torch.stack(f_pos_feat), dim=1)
+                f_neg_feat = torch.squeeze(torch.stack(f_neg_feat), dim=1)
+
+                loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
+                tmp_loss = loss_fn(f_neg_feat, f_pos_feat)
+
+                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
+                    loss = loss + (tmp_loss * config.weight)
+                else:
+                    loss = tmp_loss
+
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "group_contrastive", float(tmp_loss)])
+                    writer.writerow([timestamp, iteration, "group_contrastive_additive", float(loss)])
+                    f.flush()
+
+            if config.rotation:
+                inputs_ssh, labels1_ssh = rotate_batch(inputs.cuda(), 'rand')
+                outputs_ssh = self.ssh(inputs_ssh.float())
+                rotation_loss = nn.CrossEntropyLoss()(outputs_ssh, labels1_ssh.cuda())
+                
+                if loss is not None:
+                    loss = loss + rotation_loss
+                else:
+                    loss = rotation_loss
 
             # Backward and optimize
             if loss is not None:
@@ -751,13 +752,13 @@ class Model(object):
                 if len(img) > 3:
                     loss_hist = self.adapt(data_dict, config, old_net)
                 else:
-                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank:
+                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
                         config.group_contrastive = False
                         loss_hist = self.adapt(data_dict, config, old_net)
             elif config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
                 loss_hist = self.adapt(data_dict, config, old_net)
-            # Adaptive Margin 
-            elif config.adaptive_margin_rank or config.confidence_weighted_rank:
+            # AMRL, CWRL, Mono Loss
+            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
                 loss_hist = self.adapt(data_dict, config, old_net)
 
             # if config.rank:
