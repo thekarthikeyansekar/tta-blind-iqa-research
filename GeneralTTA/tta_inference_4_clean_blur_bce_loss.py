@@ -324,7 +324,7 @@ class Model(object):
         # Clean Blur BCE Loss
         # -----------------------------
         self.clean_blur_bce_fn = None
-        if getattr(config, 'clean_blur_bce_loss', False):
+        if config.clean_blur_bce_loss:
             self.clean_blur_bce_fn = CleanBlurBCELoss(
                 sigma_min=getattr(config, 'clean_blur_sigma_min', 5.0),
                 sigma_max=getattr(config, 'clean_blur_sigma_max', 20.0),
@@ -459,8 +459,8 @@ class Model(object):
         dist_high = None
         dist_low = None
 
-        print(f"[adapt][config.adaptive_margin_rank] = {config.adaptive_margin_rank}")
-        print(f"[adapt][config.confidence_weighted_rank] = {config.confidence_weighted_rank}")
+        # print(f"[adapt][config.adaptive_margin_rank] = {config.adaptive_margin_rank}")
+        # print(f"[adapt][config.confidence_weighted_rank] = {config.confidence_weighted_rank}")
 
         with torch.no_grad():
             pred0, _ = old_net(data_dict['image'].cuda())
@@ -851,13 +851,13 @@ class Model(object):
                 if len(img) > 3:
                     loss_hist = self.adapt(data_dict, config, old_net)
                 else:
-                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
+                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
                         config.group_contrastive = False
                         loss_hist = self.adapt(data_dict, config, old_net)
             elif config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
                 loss_hist = self.adapt(data_dict, config, old_net)
-            # AMRL, CWRL, Mono Loss
-            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
+            # AMRL, CWRL, Mono Loss, CleanBlurBCELoss
+            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
                 loss_hist = self.adapt(data_dict, config, old_net)
 
             # if config.rank:
