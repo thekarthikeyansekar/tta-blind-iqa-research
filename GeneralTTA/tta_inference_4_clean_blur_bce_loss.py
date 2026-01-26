@@ -16,6 +16,147 @@ import time
 import csv
 from datetime import datetime
 
+
+# -----------------------------
+# Mono Loss
+# -----------------------------
+class MonoLoss(nn.Module):
+    def __init__(self, loss_weight=1.0, normalize=True):
+        super().__init__()
+        self.loss_weight = loss_weight
+        self.normalize = normalize
+
+    def forward(self, prob_good):
+        # loss = torch.tensor(0.0, device=prob_good.device)
+        if isinstance(prob_good, list):
+            prob_good = torch.stack(prob_good, dim=0)
+        p = prob_good.float()                # [S]
+        if p.numel() < 2:
+            return p.new_zeros(())
+
+        num_levels = p.shape[0]
+        loss = p.new_zeros(())
+        total_weight = 0.0
+
+        for i in range(num_levels):
+            for j in range(i + 1, num_levels):
+                weight = float(j - i)
+                penalty = F.relu(p[j] - p[i] + 0.02)
+                loss += weight * penalty
+                total_weight += weight
+
+        if self.normalize and total_weight > 0:
+            loss = loss / total_weight
+        return self.loss_weight * loss
+
+
+# -----------------------------
+# Clean Blur BCE Loss
+# (Unsupervised directional loss: clean -> good, blur -> bad)
+# -----------------------------
+class CleanBlurBCELoss(nn.Module):
+    """
+    Unsupervised directional BCE loss:
+      clean image -> should be GOOD (target = 1)
+      blurred image -> should be BAD (target = 0)
+    
+    Uses P(good) probability predictions from the model.
+    """
+    def __init__(self, sigma_min=5.0, sigma_max=20.0, weight=1.0):
+        super().__init__()
+        self.sigma_min = sigma_min
+        self.sigma_max = sigma_max
+        self.weight = weight
+        self.bce = nn.BCELoss()
+
+    def forward(self, image_tensor, model):
+        """
+        Args:
+            image_tensor: torch.Tensor [B, C, H, W] on cuda
+            model: the IQA model with forward() -> (quality_pred, feat)
+                   returns quality predictions (MOS/P(good))
+        
+        Returns:
+            loss: scalar BCE loss
+        """
+        # ---- generate views ----
+        view_clean = image_tensor  # original image
+        
+        # Random blur sigma for each batch item
+        B = image_tensor.shape[0]
+        sigmas = []
+        for _ in range(B):
+            sigma = self.sigma_min + np.random.rand() * (self.sigma_max - self.sigma_min)
+            sigmas.append(float(sigma))
+        
+        # Apply Gaussian blur with per-batch sigma
+        # For consistency, use the first sigma for all (or average)
+        # Note: T.GaussianBlur doesn't natively support per-batch sigma
+        # So we use the mean or first sigma
+        sigma_avg = np.mean(sigmas)
+        view_blur = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma_avg)(image_tensor)
+
+        # ---- predictions (quality/MOS scores) ----
+        # Assuming model returns (quality_score, features) tuple
+        q_clean, _ = model(view_clean)  # [B] or [B, 1]
+        q_blur, _  = model(view_blur)   # [B] or [B, 1]
+        
+        # Ensure 1D tensors
+        q_clean = q_clean.view(-1)
+        q_blur = q_blur.view(-1)
+        
+        # Normalize to [0, 1] probability space if needed
+        # Apply sigmoid to convert scores to probabilities
+        p_good_clean = torch.sigmoid(q_clean)
+        p_good_blur = torch.sigmoid(q_blur)
+
+        # ---- pseudo-targets ----
+        target_clean = torch.ones_like(p_good_clean)
+        target_blur = torch.zeros_like(p_good_blur)
+
+        # ---- BCE loss ----
+        loss_clean = self.bce(p_good_clean, target_clean)
+        loss_blur = self.bce(p_good_blur, target_blur)
+
+        return self.weight * (loss_clean + loss_blur)
+
+
+# -----------------------------
+# Confidence Weighted Rank Loss
+# -----------------------------
+class ConfidenceWeightedRankLoss(nn.Module):
+    def __init__(self, cmrl_tau_low=0.05, cmrl_tau_high=0.25, cmrl_eps=1e-6):
+        print("ConfidenceWeightedRankLoss initialized")
+        super(ConfidenceWeightedRankLoss, self).__init__()
+        # super().__init__()
+        self.cmrl_tau_low = cmrl_tau_low
+        self.cmrl_tau_high = cmrl_tau_high
+        self.cmrl_eps = cmrl_eps
+        self.bce = nn.BCEWithLogitsLoss(reduction='none')  # logits version
+
+    def forward(self, dist_high, dist_low, q_high, q_low):
+        # dist_*: (B,), q_*: (B,)
+        logits = dist_high - dist_low             # s_i
+        base_loss = self.bce(logits, torch.ones_like(logits))
+
+        # confidence from pseudo-scores (no ground truth)
+        c = torch.abs(q_high - q_low).detach()
+
+        # normalize into [0,1] using a soft piecewise-linear mapping
+        # pairs with c <= cmrl_tau_low get ~0 weight (too ambiguous)
+        # pairs with c >= cmrl_tau_high get weight ~1 (very confident)
+        w = (c - self.cmrl_tau_low) / (self.cmrl_tau_high - self.cmrl_tau_low + self.cmrl_eps)
+        w = torch.clamp(w, min=0.0, max=1.0)
+
+        # weighted average
+        if w.sum() < self.cmrl_eps:
+            # fallback: avoid NaNs if all weights are zero
+            loss = base_loss.mean()
+        else:
+            loss = (w * base_loss).sum() / (w.sum() + self.cmrl_eps)
+        return loss
+
+
 # -----------------------------
 # Adaptive Margin Ranking Loss
 # -----------------------------
@@ -159,8 +300,36 @@ class Model(object):
         self.adaptive_gamma = getattr(config, 'adaptive_gamma', 0.5)
         if config.adaptive_margin_rank:
             self.amrl = AdaptiveMarginRankLoss(gamma=self.adaptive_gamma)
+
         self.global_step = 0
         # Adaptive Margin Rank - End
+
+        # Confidence Weighted Rank Loss - Start
+        self.cwrl = None
+        if config.confidence_weighted_rank:
+            self.cwrl = ConfidenceWeightedRankLoss(config.cmrl_tau_low, config.cmrl_tau_high, config.cmrl_eps)
+        # Confidence Weighted Rank Loss - End
+
+        # -----------------------------
+        # Mono Loss
+        # -----------------------------
+        self.mono_loss_fn = None
+        if config.mono_loss:
+            self.mono_loss_fn = MonoLoss(
+                loss_weight=config.mono_loss_weight,
+                normalize=True
+            )
+
+        # -----------------------------
+        # Clean Blur BCE Loss
+        # -----------------------------
+        self.clean_blur_bce_fn = None
+        if getattr(config, 'clean_blur_bce_loss', False):
+            self.clean_blur_bce_fn = CleanBlurBCELoss(
+                sigma_min=getattr(config, 'clean_blur_sigma_min', 5.0),
+                sigma_max=getattr(config, 'clean_blur_sigma_max', 20.0),
+                weight=getattr(config, 'clean_blur_weight', 1.0)
+            )
 
         self.net = Net(config, device).to(device)
         self.head = head_on_layer2(config)
@@ -173,6 +342,52 @@ class Model(object):
         self.optimizer_ssh = torch.optim.Adam(self.ext.parameters(), lr=self.lr)
         if not config.fix_ssh:
             self.optimizer_ssh = torch.optim.Adam(self.ssh.parameters(), lr=self.lr)
+
+    def _multiscale_images(self, image, scales):
+        """
+        image: Tensor [B, C, H, W]
+        returns: list of tensors, each [B, C, H, W]
+        """
+        B = image.shape[0]
+        outs = []
+
+        for s in scales:
+            if s == 1.0:
+                outs.append(image)
+            else:
+                h = int(image.shape[2] * s)
+                w = int(image.shape[3] * s)
+                low = torch.nn.functional.interpolate(
+                    image, size=(h, w), mode='bicubic', align_corners=False
+                )
+                up = torch.nn.functional.interpolate(
+                    low, size=image.shape[2:], mode='bicubic', align_corners=False
+                )
+                outs.append(up)
+
+        return outs
+
+    def _margins_for_images(self, multi):
+        preds = []
+        for im in multi:
+            if im.dim() == 3:
+                im = im.unsqueeze(0)
+            im = im.to(self.device)
+            p, _ = self.net(im)
+            preds.append(p.mean())  # 🔥 reduce batch
+        return torch.stack(preds)  # shape: [S]
+
+
+
+    def _margins_for_images_old(self, multi):
+        preds = []
+        for im in multi:
+            if im.dim() == 3:
+                im = im.unsqueeze(0)
+            im = im.to(self.device)
+            p, _ = self.net(im)
+            preds.append(p.view(-1))
+        return preds
 
 
     def test(self, data, pretrained=0):
@@ -245,6 +460,7 @@ class Model(object):
         dist_low = None
 
         print(f"[adapt][config.adaptive_margin_rank] = {config.adaptive_margin_rank}")
+        print(f"[adapt][config.confidence_weighted_rank] = {config.confidence_weighted_rank}")
 
         with torch.no_grad():
             pred0, _ = old_net(data_dict['image'].cuda())
@@ -305,8 +521,11 @@ class Model(object):
                 f_high = torch.squeeze(torch.stack(f_high), dim=1)
                 
         # Pre-compute quality scores for AMRL if needed
-        if config.adaptive_margin_rank:
-            print(f"[AMRLConfig] step={self.global_step}")
+        if config.adaptive_margin_rank or config.confidence_weighted_rank:
+            if config.confidence_weighted_rank:
+                print(f"[CWRLConfig] step={self.global_step}")
+            else:
+                print(f"[AMRLConfig] step={self.global_step}")
 
             sigma1 = 40 + np.random.random() * 20
             sigma2 = 5 + np.random.random() * 15
@@ -367,7 +586,7 @@ class Model(object):
         for iteration in range(config.niter):
 
             # Zero gradients at the start of each iteration
-            self.optimizer_ssh.zero_grad()
+            # self.optimizer_ssh.zero_grad()
             
             target = torch.ones(inputs.shape[0]).cuda()
             loss = None  # Initialize loss
@@ -390,7 +609,8 @@ class Model(object):
                     f.flush()
             
             # Adaptive Margin Rank Loss - Start
-            print(f"[DEBUG] adaptive_margin_rank = {config.adaptive_margin_rank}, amrl = {self.amrl is not None}, q_high = {q_high is not None}, q_low = {q_low is not None}")
+            # print(f"[DEBUG] adaptive_margin_rank = {config.adaptive_margin_rank}, amrl = {self.amrl is not None}, q_high = {q_high is not None}, q_low = {q_low is not None}")
+
             if config.adaptive_margin_rank and (self.amrl is not None) and (q_high is not None) and (q_low is not None):
                 # Compute features if not already done
                 if dist_high is None or dist_low is None:
@@ -440,6 +660,39 @@ class Model(object):
                     f.flush()
             # Adaptive Margin Rank Loss - End
 
+            # Confidence Weighted Rank Loss - Start
+            if config.confidence_weighted_rank:
+                if self.cwrl is None:
+                    print("[ERROR] confidence_weighted_rank is true, but cwrl is None")
+                if dist_high is None or dist_low is None:
+                    f_neg_feat = self.ssh(f_low)
+                    f_pos_feat = self.ssh(f_high)
+                    f_actual = self.ssh(inputs.cuda())
+
+                    dist_high = torch.nn.PairwiseDistance(p=2)(f_pos_feat, f_actual)
+                    dist_low = torch.nn.PairwiseDistance(p=2)(f_neg_feat, f_actual)
+                
+                print(f"[AMRLLoss] step={self.global_step}")
+                q_high_vec = q_high.view(-1).detach().to(dist_high.device)
+                q_low_vec = q_low.view(-1).detach().to(dist_low.device)
+
+                cwrl_loss = self.cwrl(dist_high, dist_low, q_high_vec, q_low_vec)
+                
+                # Combine or replace loss
+                if loss is not None and (config.rank or config.blur or config.comp or config.nos):
+                    loss = loss + cwrl_loss  # Combine with rank loss
+                else:
+                    loss = cwrl_loss  # Use CWRL loss alone
+                
+                # loss_amrl_val = float(amrl_loss.detach().cpu().item())
+                print(f"[loss] cwrl_loss = {cwrl_loss}")
+
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "confidence_weighted_rank", cwrl_loss])
+                    f.flush()
+
             if config.contrastive or config.contrique:
                 f_neg_feat = self.ssh(f_low)
                 f_pos_feat = self.ssh(f_high)
@@ -452,6 +705,58 @@ class Model(object):
                     loss = loss + contrastive_loss
                 else:
                     loss = contrastive_loss
+
+                        # -----------------------------
+            
+            # Mono Loss
+            # -----------------------------
+            if config.mono_loss and self.mono_loss_fn is not None:
+                multi = self._multiscale_images(
+                    inputs.cuda(),
+                    scales=config.mono_scales
+                )
+
+                margins = self._margins_for_images(multi)
+                mono_loss = self.mono_loss_fn(margins)
+
+                if loss is not None:
+                    loss = loss + mono_loss
+                else:
+                    loss = mono_loss
+
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "mono_loss",
+                                    float(mono_loss.detach().cpu().item())])
+                    f.flush()
+
+                print(timestamp, iteration, "mono_loss",
+                                    float(mono_loss.detach().cpu().item()))
+            else:
+                print("Mono Loss is skipped")
+
+            # -----------------------------
+            # Clean Blur BCE Loss
+            # (Unsupervised directional loss)
+            # -----------------------------
+            if config.clean_blur_bce_loss and self.clean_blur_bce_fn is not None:
+                # Use the original input image for generating clean/blurred views
+                clean_blur_loss = self.clean_blur_bce_fn(inputs.cuda(), self.net)
+
+                if loss is not None:
+                    loss = loss + clean_blur_loss
+                else:
+                    loss = clean_blur_loss
+
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+                with open(args.logs_csv_path, mode="a", newline="") as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, iteration, "clean_blur_bce_loss",
+                                    float(clean_blur_loss.detach().cpu().item())])
+                    f.flush()
+
+                print(f"[{timestamp}] iteration {iteration}, clean_blur_bce_loss = {float(clean_blur_loss.detach().cpu().item())}")
 
             if config.group_contrastive:
 
@@ -475,7 +780,7 @@ class Model(object):
                 loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
                 tmp_loss = loss_fn(f_neg_feat, f_pos_feat)
 
-                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank:
+                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
                     loss = loss + (tmp_loss * config.weight)
                 else:
                     loss = tmp_loss
@@ -512,6 +817,8 @@ class Model(object):
         self.global_step += 1
 
         return loss_hist
+
+
     def new_ttt(self, data, config):
 
         if config.online:
@@ -544,13 +851,13 @@ class Model(object):
                 if len(img) > 3:
                     loss_hist = self.adapt(data_dict, config, old_net)
                 else:
-                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank:
+                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
                         config.group_contrastive = False
                         loss_hist = self.adapt(data_dict, config, old_net)
             elif config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
                 loss_hist = self.adapt(data_dict, config, old_net)
-            # Adaptive Margin 
-            elif config.adaptive_margin_rank:
+            # AMRL, CWRL, Mono Loss
+            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss:
                 loss_hist = self.adapt(data_dict, config, old_net)
 
             # if config.rank:
@@ -659,10 +966,43 @@ parser.add_argument('--adaptive_gamma', dest='adaptive_gamma', type=float, defau
                     help='Gamma (max margin) used by AMRL; only used when --adaptive_margin_rank is set (default=0.5)')
 # Adaptive Margin Rank - End
 
+# Confidence Weighted Rank Loss - Start
+parser.add_argument('--confidence_weighted_rank', dest='confidence_weighted_rank', action='store_true',
+                    help='Enable Confidence Weighted Rank Loss (CWRL)')
+parser.add_argument('--cmrl_tau_low', dest='cmrl_tau_low', type=float, default=0.05,
+                    help='Tau Low used by CWRL; only used when --confidence_weighted_rank is set (default=0.05)')
+parser.add_argument('--cmrl_tau_high', dest='cmrl_tau_high', type=float, default=0.25,
+                    help='Tau High used by CWRL; only used when --confidence_weighted_rank is set (default=0.25)')
+parser.add_argument('--cmrl_eps', dest='cmrl_eps', type=float, default=1e-6,
+                    help='EPS used by CWRL; only used when --confidence_weighted_rank is set (default=1e-6)')
+# Confidence Weighted Rank Loss - End
+
 parser.add_argument("--exp-name",  dest='exp_name', help="experiment name", default="exp")
 parser.add_argument("--exp-path",  dest='exp_path', help="experiment path")
 parser.add_argument("--logs-csv-path",  dest='logs_csv_path', help="logs csv path")
 parser.add_argument("--plcc-csv-path",  dest='plcc_csv_path', help="plcc csv path")
+
+# Mono Loss flag - Start
+parser.add_argument('--mono_loss', dest='mono_loss', action='store_true',
+                    help='Enable Mono (Monotonicity) Loss')
+parser.add_argument('--mono_loss_weight', type=float, default=1.0,
+                    help='Weight for Mono Loss')
+parser.add_argument('--mono_scales', nargs='+', type=float,
+                    default=[1.0, 0.75, 0.5, 0.35],
+                    help='Scales used for Mono Loss multiscale images')
+# Mono Loss flag - End
+
+# Clean Blur BCE Loss flag - Start
+parser.add_argument('--clean_blur_bce_loss', dest='clean_blur_bce_loss', action='store_true',
+                    help='Enable Clean Blur BCE Loss (unsupervised directional loss)')
+parser.add_argument('--clean_blur_sigma_min', type=float, default=5.0,
+                    help='Minimum sigma for Gaussian blur in Clean Blur BCE Loss (default=5.0)')
+parser.add_argument('--clean_blur_sigma_max', type=float, default=20.0,
+                    help='Maximum sigma for Gaussian blur in Clean Blur BCE Loss (default=20.0)')
+parser.add_argument('--clean_blur_weight', type=float, default=1.0,
+                    help='Weight for Clean Blur BCE Loss (default=1.0)')
+# Clean Blur BCE Loss flag - End
+
 
 args = parser.parse_args()
 
