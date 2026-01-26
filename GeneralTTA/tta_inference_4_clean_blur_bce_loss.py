@@ -733,8 +733,8 @@ class Model(object):
 
                 print(timestamp, iteration, "mono_loss",
                                     float(mono_loss.detach().cpu().item()))
-            else:
-                print("Mono Loss is skipped")
+            # else:
+            #     print("Mono Loss is skipped")
 
             # -----------------------------
             # Clean Blur BCE Loss
@@ -756,7 +756,9 @@ class Model(object):
                                     float(clean_blur_loss.detach().cpu().item())])
                     f.flush()
 
-                print(f"[{timestamp}] iteration {iteration}, clean_blur_bce_loss = {float(clean_blur_loss.detach().cpu().item())}")
+                # print(f"[{timestamp}] iteration {iteration}, clean_blur_bce_loss = {float(clean_blur_loss.detach().cpu().item())}")
+            else:
+                print("CleanBlurBCE Loss is skipped")
 
             if config.group_contrastive:
 
