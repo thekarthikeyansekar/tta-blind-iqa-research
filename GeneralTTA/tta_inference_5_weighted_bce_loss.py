@@ -1205,8 +1205,12 @@ parser.add_argument('--clean_blur_weight', type=float, default=1.0,
                     help='Weight for Clean Blur BCE Loss (default=1.0)')
 # Clean Blur BCE Loss flag - End
 
-# Weighted BCE Loss Tracker
+# Weighted BCE Loss - Start
 parser.add_argument("--bce-logs-csv-path",  dest='bce_logs_csv_path', help="bce logs csv path")
+parser.add_argument('--weighted_bce_loss', dest='weighted_bce_loss', action='store_true',
+                    help='Enable Weighted Clean Blur BCE Loss ')
+# Weighted BCE Loss - End
+
 
 args = parser.parse_args()
 
