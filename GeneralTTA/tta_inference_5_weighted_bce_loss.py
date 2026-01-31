@@ -668,7 +668,7 @@ class Model(object):
             sigma_blur = np.mean(sigmas_blur)
 
             data_dict['blur_high'] = inputs.cuda()
-            data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma_blur)(inputs)..cuda()
+            data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma_blur)(inputs).cuda()
             
             with torch.no_grad():
                 q_high, _ = old_net(data_dict['blur_high'].cuda())
