@@ -894,8 +894,8 @@ class Model(object):
                     f.flush()
 
                 # print(f"[{timestamp}] iteration {iteration}, clean_blur_bce_loss = {float(clean_blur_loss.detach().cpu().item())}")
-            else:
-                print("CleanBlurBCE Loss is skipped")
+            # else:
+                # print("CleanBlurBCE Loss is skipped")
 
 
             # --------------------------------
