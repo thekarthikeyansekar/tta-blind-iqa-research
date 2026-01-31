@@ -982,7 +982,7 @@ class Model(object):
                 loss_fn = GroupContrastiveLoss(f_pos_feat.shape[0], 0.1).cuda()
                 tmp_loss = loss_fn(f_neg_feat, f_pos_feat)
 
-                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
+                if config.rank or config.blur or config.comp or config.nos or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss or config.weighted_bce_loss:
                     loss = loss + (tmp_loss * config.weight)
                 else:
                     loss = tmp_loss
@@ -1053,13 +1053,13 @@ class Model(object):
                 if len(img) > 3:
                     loss_hist = self.adapt(data_dict, config, old_net)
                 else:
-                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
+                    if config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique or config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss or config.weighted_bce_loss:
                         config.group_contrastive = False
                         loss_hist = self.adapt(data_dict, config, old_net)
             elif config.rank or config.blur or config.comp or config.nos or config.contrastive or config.rotation or config.contrique:
                 loss_hist = self.adapt(data_dict, config, old_net)
             # AMRL, CWRL, Mono Loss, CleanBlurBCELoss
-            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss:
+            elif config.adaptive_margin_rank or config.confidence_weighted_rank or config.mono_loss or config.clean_blur_bce_loss or config.weighted_bce_loss:
                 loss_hist = self.adapt(data_dict, config, old_net)
 
             # if config.rank:
