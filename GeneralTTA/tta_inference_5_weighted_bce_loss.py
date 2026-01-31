@@ -118,7 +118,9 @@ class CleanBlurBCELoss(nn.Module):
         loss_clean = self.bce(p_good_clean, target_clean)
         loss_blur = self.bce(p_good_blur, target_blur)
 
-        return self.weight * (loss_clean + loss_blur)
+        # Ensure scalar weight
+        weight_scalar = self.weight if isinstance(self.weight, (int, float)) else 1.0
+        return weight_scalar * (loss_clean + loss_blur)
 
 # --------------------
 # Weighted BCE Loss
@@ -138,7 +140,7 @@ class CustomMarginCleanBlurBCELoss(nn.Module):
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.weight = weight
-        self.bce = nn.BCELoss()
+        self.bce = nn.BCELoss(reduction='none')
 
     def forward(self, image_tensor, model):
         view_clean = image_tensor  # original image
@@ -172,7 +174,18 @@ class CustomMarginCleanBlurBCELoss(nn.Module):
         loss_clean = self.bce(p_good_clean, target_clean)
         loss_blur = self.bce(p_good_blur, target_blur)
 
-        return self.weight * (loss_clean + loss_blur)
+        # Combine losses per sample
+        loss_per_sample = loss_clean + loss_blur
+        
+        # Apply per-sample weights if self.weight is a tensor
+        if isinstance(self.weight, torch.Tensor) and self.weight.numel() > 1:
+            loss_weighted = (self.weight * loss_per_sample).mean()
+        else:
+            # If weight is scalar, just average the loss
+            weight_scalar = self.weight if isinstance(self.weight, (int, float)) else 1.0
+            loss_weighted = weight_scalar * loss_per_sample.mean()
+        
+        return loss_weighted
     
 
 class CustomMarginCleanBlurBCELoss_Depre(nn.Module):
@@ -654,8 +667,8 @@ class Model(object):
             
             sigma_blur = np.mean(sigmas_blur)
 
-            data_dict['blur_high'] = inputs
-            data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma_blur)(inputs).cuda()
+            data_dict['blur_high'] = inputs.cuda()
+            data_dict['blur_low'] = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma_blur)(inputs)..cuda()
             
             with torch.no_grad():
                 q_high, _ = old_net(data_dict['blur_high'].cuda())
